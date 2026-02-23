@@ -96,6 +96,7 @@ class FaxController extends Controller
             $previewItems    = $this->buildPreviewItems($copiedRows, 'pending');
             $fetchedFileNames = $this->buildFetchedFileNames($copiedRows);
             $copiedCount     = $copiedRows->count();
+            session(['pipeline_fetch_done' => true]);
 
             return view('fax-intake', [
                 'activeMenu'       => 'fetch',
@@ -261,25 +262,25 @@ class FaxController extends Controller
         $imageName = $request->input('image_name');
         $imagePath = $request->input('image_path');
 
-        // store/merge state in session instead of DB table
-        $state = session('global_state', []);
-        if (!is_array($state)) {
-            $state = [];
-        }
-        if (is_string($imageName) && trim($imageName) !== '') {
-            $state['gs_current_image_name'] = trim($imageName);
-            $state['fp_image_name'] = trim($imageName);
-        }
-        if (is_string($imagePath) && trim($imagePath) !== '') {
-            $state['fp_image_path'] = trim($imagePath);
-            $state['gs_current_image_path'] = trim($imagePath);
-        }
-        $state['gs_firstname'] = $state['gs_firstname'] ?? '';
-        $state['gs_lastname'] = $state['gs_lastname'] ?? '';
-        $state['gs_dob'] = $state['gs_dob'] ?? '';
-        $state['created_at'] = $state['created_at'] ?? now()->toDateTimeString();
-        $state['updated_at'] = now()->toDateTimeString();
+        // Confirm starts a brand-new OCR run for the selected image.
+        // Reset all prior OCR/session fields and keep only current selection context.
+        $now = now()->toDateTimeString();
+        $state = [
+            'gs_current_image_name' => is_string($imageName) && trim($imageName) !== '' ? trim($imageName) : null,
+            'fp_image_name' => is_string($imageName) && trim($imageName) !== '' ? trim($imageName) : null,
+            'fp_image_path' => is_string($imagePath) && trim($imagePath) !== '' ? trim($imagePath) : null,
+            'gs_current_image_path' => is_string($imagePath) && trim($imagePath) !== '' ? trim($imagePath) : null,
+            'gs_firstname' => '',
+            'gs_lastname' => '',
+            'gs_dob' => '',
+            'fp_firstname_human' => '',
+            'fp_lastname_human' => '',
+            'fp_dob_human' => '',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
         session(['global_state' => $state]);
+        session(['pipeline_pending_done' => true]);
 
         return response()->json(['ok' => true]);
     }
@@ -310,6 +311,8 @@ class FaxController extends Controller
 
             // remove session-based global state
             session()->forget('global_state');
+            session()->forget('pipeline_fetch_done');
+            session()->forget('pipeline_pending_done');
 
             $deletedFiles = 0;
             $allFiles = Storage::disk('public')->allFiles();

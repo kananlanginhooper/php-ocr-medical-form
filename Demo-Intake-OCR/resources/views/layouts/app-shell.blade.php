@@ -340,11 +340,19 @@
                 @foreach ($steps as $i => $step)
                     @php
                         $isActive = $step['key'] === $activeMenu;
-                        $isDone   = !$isActive
-                                    && $step['humanCol'] !== null
-                                    && $currentRecord !== null
-                                    && ($currentRecord->{$step['humanCol']} ?? null) !== null
-                                    && ($currentRecord->{$step['humanCol']} ?? '') !== '';
+                        $isDone = false;
+                        if (!$isActive) {
+                            if ($step['key'] === 'fetch') {
+                                $isDone = session('pipeline_fetch_done') === true;
+                            } elseif ($step['key'] === 'pending') {
+                                $isDone = session('pipeline_pending_done') === true;
+                            } else {
+                                $isDone = $step['humanCol'] !== null
+                                        && $currentRecord !== null
+                                        && ($currentRecord->{$step['humanCol']} ?? null) !== null
+                                        && ($currentRecord->{$step['humanCol']} ?? '') !== '';
+                            }
+                        }
                     @endphp
                     <a href="{{ route($step['route']) }}"
                        class="step-link {{ $isActive ? 'active' : ($isDone ? 'done' : '') }}">
