@@ -307,7 +307,7 @@ class AreaCalculator
         return $tokens;
     }
 
-    public function detectHandwrittenAreaBetweenLabels(string $imagePath, array $labelResult): ?array
+    public function detectHandwrittenAreaBetweenLabels(string $imagePath, array $labelResult, ?array $underline = null): ?array
     {
         if (!is_file($imagePath)) {
             return null;
@@ -323,15 +323,16 @@ class AreaCalculator
                 return null;
             }
 
-            // rely on underline finder for line position
-            // caller can supply underline if needed; try to scan for underline using pixel analysis
-            $underlineFinder = new UnderlineFinder();
-            $underline = $underlineFinder->detectUnderlineAfterLabel($imagePath, $labelResult);
+            // Prefer underline from Step 2 (session) when available; fallback to scan.
+            $underline = is_array($underline) ? $underline : null;
+            if (!$underline || !isset($underline['x'], $underline['x1'])) {
+                $underlineFinder = new UnderlineFinder();
+                $underline = $underlineFinder->detectUnderlineAfterLabel($imagePath, $labelResult);
+            }
             if (!$underline || !isset($underline['x'], $underline['x1'])) {
                 return null;
             }
 
-            $firstHeight = max(1, $firstBottom - $firstTop);
             $boxLeft = (int) $underline['x'];
             $boxRight = (int) $underline['x1'];
 
@@ -339,9 +340,23 @@ class AreaCalculator
                 return null;
             }
 
-            $boxHeight = min(125, max(95, $firstHeight * 1.27));
-            $boxBottom = max(0, $firstBottom + 3);
-            $boxTop = max(0, $boxBottom - $boxHeight);
+            $labelBaselineY = $firstBottom;
+            $underlineY = (int) round((
+                (int) ($underline['y'] ?? $labelBaselineY)
+                + (int) ($underline['y1'] ?? ($underline['y'] ?? $labelBaselineY))
+            ) / 2);
+
+            // Step 3 geometry:
+            // bottom starts 8px below label baseline, and area expands upward ~150px from underline.
+            $boxBottom = max(0, max($labelBaselineY + 8, $underlineY));
+            $boxTop = max(0, $underlineY - 170);
+            if ($boxTop >= $boxBottom) {
+                $boxBottom = $boxTop + 1;
+            }
+            $maxHeight = 100;
+            if (($boxBottom - $boxTop) > $maxHeight) {
+                $boxTop = max(0, $boxBottom - $maxHeight);
+            }
 
             $imageSize = @getimagesize($imagePath);
             if (is_array($imageSize) && isset($imageSize[0], $imageSize[1])) {
@@ -383,14 +398,14 @@ class AreaCalculator
         }
     }
 
-    public function detectHandwrittenAreaAfterLabel(?string $imagePath, array $labelResult): ?array
+    public function detectHandwrittenAreaAfterLabel(?string $imagePath, array $labelResult, ?array $underline = null): ?array
     {
         try {
             if (!$imagePath || !file_exists($imagePath)) {
                 return null;
             }
 
-            $area = $this->detectHandwrittenAreaBetweenLabels($imagePath, $labelResult);
+            $area = $this->detectHandwrittenAreaBetweenLabels($imagePath, $labelResult, $underline);
             if (!$area) {
                 return null;
             }

@@ -11,6 +11,9 @@ use App\Services\AreaCalculator;
 use App\Services\OcrStateAccessor;
 use App\Services\HandwrittenFinder;
 
+
+// for "First name ocr" underline is between "first name" and "last name"
+
 class FirstNameOcrController extends Controller
 {
     private LabelFinder $labelFinder;
@@ -255,7 +258,13 @@ class FirstNameOcrController extends Controller
             }
 
             $labelResult = $locationData['label'];
-            $handwrittenResult = $this->areaCalculator->detectHandwrittenAreaAfterLabel($imagePath, $labelResult);
+            $storedUnderline = null;
+            if (isset($locationData['handwritten']) && is_array($locationData['handwritten'])) {
+                $storedUnderline = is_array($locationData['handwritten']['underline'] ?? null)
+                    ? $locationData['handwritten']['underline']
+                    : $locationData['handwritten'];
+            }
+            $handwrittenResult = $this->areaCalculator->detectHandwrittenAreaAfterLabel($imagePath, $labelResult, $storedUnderline);
 
             if (!$handwrittenResult) {
                 return response()->json([

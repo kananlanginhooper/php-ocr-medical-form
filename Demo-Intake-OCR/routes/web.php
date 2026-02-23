@@ -34,5 +34,13 @@ Route::post('/lastname-ocr/run', [LastNameOcrController::class, 'runLastNameOcr'
 Route::post('/lastname-ocr/confirm', [LastNameOcrController::class, 'confirmLastNameOcr'])->name('lastname.confirm');
 Route::get('/dob-ocr', [DobOcrController::class, 'dobOcr'])->name('dob.index');
 Route::post('/dob-ocr/label', [DobOcrController::class, 'findDobLabel'])->name('dob.label');
+Route::post('/dob-ocr/handwritten', [DobOcrController::class, 'findDobHandwritten'])->name('dob.handwritten');
+Route::post('/dob-ocr/area', [DobOcrController::class, 'findDobArea'])->name('dob.area');
+Route::post('/dob-ocr/options', [DobOcrController::class, 'findDobOptions'])->name('dob.options');
+Route::post('/dob-ocr/run', [DobOcrController::class, 'runDobOcr'])->name('dob.run');
+Route::post('/dob-ocr/confirm', [DobOcrController::class, 'confirmDobOcr'])->name('dob.confirm');
+Route::post('/underline/first', [App\Http\Controllers\UnderlineFinderController::class, 'firstUnderline'])->name('underline.first');
+Route::post('/underline/last', [App\Http\Controllers\UnderlineFinderController::class, 'lastUnderline'])->name('underline.last');
+Route::post('/underline/dob', [App\Http\Controllers\UnderlineFinderController::class, 'dobUnderline'])->name('underline.dob');
 Route::get('/global-state', [FaxController::class, 'globalState'])->name('global.index');
 Route::post('/reset-demo', [FaxController::class, 'resetToDemo'])->name('fax.reset-demo');

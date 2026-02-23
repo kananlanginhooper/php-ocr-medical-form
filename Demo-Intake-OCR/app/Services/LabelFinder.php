@@ -284,4 +284,83 @@ class LabelFinder
             return null;
         }
     }
+
+    public function findGenderHeaderLocation(string $imagePath): ?array
+    {
+        try {
+            if (!is_file($imagePath)) {
+                return null;
+            }
+
+            $cmd = 'tesseract ' . escapeshellarg($imagePath) . ' stdout --psm 6 tsv 2>/dev/null';
+            $tsv = shell_exec($cmd);
+            if (!is_string($tsv) || trim($tsv) === '') {
+                return null;
+            }
+
+            $lines = preg_split('/\r\n|\r|\n/', trim($tsv)) ?: [];
+            if (count($lines) < 2) return null;
+
+            $rows = [];
+            for ($i = 1; $i < count($lines); $i++) {
+                $line = trim($lines[$i]);
+                if ($line === '') continue;
+                $parts = explode("\t", $line);
+                if (count($parts) < 12) continue;
+                $text = trim((string) $parts[11]);
+                if ($text === '') continue;
+                $rows[] = [
+                    'text' => $text,
+                    'text_norm' => strtolower(preg_replace('/[^a-z0-9]/i', '', $text)),
+                    'left' => (int) $parts[6],
+                    'top' => (int) $parts[7],
+                    'width' => (int) $parts[8],
+                    'height' => (int) $parts[9],
+                    'conf' => is_numeric($parts[10]) ? (float) $parts[10] : null,
+                ];
+            }
+
+            if (empty($rows)) return null;
+
+            $best = null;
+            for ($i = 0; $i < count($rows); $i++) {
+                $current = $rows[$i];
+                $token = $current['text_norm'];
+                if ($token === 'gender' || $token === 'sex') {
+                    $best = $current; break;
+                }
+                if ($token === 'g' && isset($rows[$i + 1]) && $rows[$i + 1]['text_norm'] === 'ender') {
+                    $next = $rows[$i + 1];
+                    $left = min($current['left'], $next['left']);
+                    $top = min($current['top'], $next['top']);
+                    $right = max($current['left'] + $current['width'], $next['left'] + $next['width']);
+                    $bottom = max($current['top'] + $current['height'], $next['top'] + $next['height']);
+                    $best = [
+                        'text' => $current['text'] . ' ' . $next['text'],
+                        'left' => $left,
+                        'top' => $top,
+                        'width' => max(1, $right - $left),
+                        'height' => max(1, $bottom - $top),
+                        'conf' => max((float) ($current['conf'] ?? 0), (float) ($next['conf'] ?? 0)),
+                    ];
+                    break;
+                }
+            }
+
+            if ($best === null) return null;
+
+            return [
+                'x' => $best['left'],
+                'y' => $best['top'],
+                'x1' => $best['left'] + $best['width'],
+                'y1' => $best['top'] + $best['height'],
+                'confidence' => $best['conf'] ?? null,
+                'header_text' => $best['text'] ?? 'Gender',
+                'extracted_value' => null,
+            ];
+        } catch (Throwable $e) {
+            \Log::warning('Error in LabelFinder::findGenderHeaderLocation: ' . $e->getMessage());
+            return null;
+        }
+    }
 }

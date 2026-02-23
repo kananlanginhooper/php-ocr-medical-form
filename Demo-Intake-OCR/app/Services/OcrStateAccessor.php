@@ -26,6 +26,17 @@ class OcrStateAccessor
         ];
     }
 
+    public function dob(array $state): array
+    {
+        return [
+            'location_raw' => $this->firstNonEmpty($state, ['fp_dob_location', 'dob_location']),
+            'ocr_guess' => $this->firstNonEmpty($state, ['fp_dob_ocr', 'dob_ocr']),
+            'ocr_score' => $this->firstNonEmpty($state, ['fp_dob_ocr_score', 'fp_dob_score', 'dob_score']),
+            'ocr_options_raw' => $this->firstNonEmpty($state, ['fp_dob_ocr_options', 'dob_ocr_options']),
+            'human_value' => $this->firstNonEmpty($state, ['fp_dob_human', 'dob_human']),
+        ];
+    }
+
     private function firstNonEmpty(array $state, array $candidates)
     {
         foreach ($candidates as $candidate) {
