@@ -399,7 +399,7 @@ class DobOcrController extends Controller
             }
             $box = $normalizedBox;
 
-            $ocrResult = $this->areaCalculator->extractHandwritingCandidatesFromBox($imagePath, $box, 4);
+            $ocrResult = $this->areaCalculator->extractHandwritingCandidatesFromBox($imagePath, $box, 4, true);
             $options = is_array($ocrResult['options'] ?? null) ? $ocrResult['options'] : [];
             $commands = is_array($ocrResult['commands'] ?? null) ? $ocrResult['commands'] : [];
             if (empty($options)) {

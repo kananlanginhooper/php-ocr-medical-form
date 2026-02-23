@@ -46,7 +46,7 @@ class AreaCalculator
         ];
     }
 
-    public function extractHandwritingCandidatesFromBox(string $imagePath, array $box, int $limit = 4): array
+    public function extractHandwritingCandidatesFromBox(string $imagePath, array $box, int $limit = 4, bool $numbersOnly = false): array
     {
         $left = (int) ($box['x'] ?? 0);
         $top = (int) ($box['y'] ?? 0);
@@ -66,8 +66,8 @@ class AreaCalculator
             'w' => max(1, $right - $left),
             'h' => max(1, $bottom - $top),
         ];
-        $commands[] = $this->buildPaddleOcrCommand($imagePath, $bbox);
-        $tokens = $this->runPaddleOcr($imagePath, $bbox);
+        $commands[] = $this->buildPaddleOcrCommand($imagePath, $bbox, $numbersOnly);
+        $tokens = $this->runPaddleOcr($imagePath, $bbox, $numbersOnly);
 
         if (!empty($tokens)) {
             usort($tokens, fn ($a, $b) => (($b['confidence'] ?? 0) <=> ($a['confidence'] ?? 0)));
@@ -125,10 +125,10 @@ class AreaCalculator
         ];
     }
 
-    public function runPaddleOcr(string $imagePath, ?array $bbox = null): array
+    public function runPaddleOcr(string $imagePath, ?array $bbox = null, bool $numbersOnly = false): array
     {
         try {
-            $cmd = $this->buildPaddleOcrCommand($imagePath, $bbox);
+            $cmd = $this->buildPaddleOcrCommand($imagePath, $bbox, $numbersOnly);
             $output = shell_exec($cmd);
 
             if (empty($output)) {
@@ -175,7 +175,7 @@ class AreaCalculator
         }
     }
 
-    public function buildPaddleOcrCommand(string $imagePath, ?array $bbox = null): string
+    public function buildPaddleOcrCommand(string $imagePath, ?array $bbox = null, bool $numbersOnly = false): string
     {
         if ($bbox === null) {
             $imageSize = @getimagesize($imagePath);
@@ -220,6 +220,7 @@ class AreaCalculator
             . ' --y ' . $y
             . ' --w ' . $w
             . ' --h ' . $h
+            . ($numbersOnly ? ' --numbers-only' : '')
             . ' 2>/dev/null';
     }
 

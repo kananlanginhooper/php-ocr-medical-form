@@ -2,3 +2,4 @@ vendor/
 .claude
 __pycache__
 ocr-env
+paddleOCR/paddle_wip_pass*

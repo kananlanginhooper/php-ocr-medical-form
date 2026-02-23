@@ -59,6 +59,8 @@ def main():
     parser.add_argument("--y", type=int, required=True, help="Y coordinate of bounding box")
     parser.add_argument("--w", type=int, required=True, help="Width of bounding box")
     parser.add_argument("--h", type=int, required=True, help="Height of bounding box")
+    parser.add_argument("--numbers-only", action="store_true",
+                        help="Restrict OCR to digits, '/', and '-' only")
     args = parser.parse_args()
 
     img = cv2.imread(args.image)
