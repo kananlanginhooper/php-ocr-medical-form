@@ -1,0 +1,17 @@
+{
+    "name": "kanan/php-ocr-medical",
+    "type": "project",
+    "require": {
+
+    },
+    "autoload": {
+        "psr-4": {
+            "Kanan\\PhpOcrMedical\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Kanan Hooper"
+        }
+    ]
+}
