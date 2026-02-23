@@ -233,9 +233,25 @@ class FaxController extends Controller
         return response()->file($filePath);
     }
 
-    public function selectRecord(int $recordId)
+    public function selectRecord(Request $request, int $recordId)
     {
         session(['ocr_review_record_id' => $recordId]);
+
+        $state = session('global_state', []);
+        if (!is_array($state)) {
+            $state = [];
+        }
+        $imageName = $request->input('image_name');
+        $imagePath = $request->input('image_path');
+        if (is_string($imageName) && trim($imageName) !== '') {
+            $state['gs_current_image_name'] = trim($imageName);
+        }
+        if (is_string($imagePath) && trim($imagePath) !== '') {
+            $state['fp_image_path'] = trim($imagePath);
+            $state['gs_current_image_path'] = trim($imagePath);
+        }
+        $state['updated_at'] = now()->toDateTimeString();
+        session(['global_state' => $state]);
 
         return response()->json(['ok' => true]);
     }
@@ -243,16 +259,27 @@ class FaxController extends Controller
     public function confirmPendingImport(Request $request)
     {
         $imageName = $request->input('image_name');
+        $imagePath = $request->input('image_path');
 
-        // store initial state in session instead of DB table
-        session(['global_state' => [
-            'gs_current_image_name' => $imageName,
-            'gs_firstname' => '',
-            'gs_lastname' => '',
-            'gs_dob' => '',
-            'created_at' => now()->toDateTimeString(),
-            'updated_at' => now()->toDateTimeString(),
-        ]]);
+        // store/merge state in session instead of DB table
+        $state = session('global_state', []);
+        if (!is_array($state)) {
+            $state = [];
+        }
+        if (is_string($imageName) && trim($imageName) !== '') {
+            $state['gs_current_image_name'] = trim($imageName);
+            $state['fp_image_name'] = trim($imageName);
+        }
+        if (is_string($imagePath) && trim($imagePath) !== '') {
+            $state['fp_image_path'] = trim($imagePath);
+            $state['gs_current_image_path'] = trim($imagePath);
+        }
+        $state['gs_firstname'] = $state['gs_firstname'] ?? '';
+        $state['gs_lastname'] = $state['gs_lastname'] ?? '';
+        $state['gs_dob'] = $state['gs_dob'] ?? '';
+        $state['created_at'] = $state['created_at'] ?? now()->toDateTimeString();
+        $state['updated_at'] = now()->toDateTimeString();
+        session(['global_state' => $state]);
 
         return response()->json(['ok' => true]);
     }
@@ -572,7 +599,7 @@ class FaxController extends Controller
         $candidate = is_string($path) && $path !== '' ? $path : $value;
         $ext = strtolower(pathinfo($candidate, PATHINFO_EXTENSION));
 
-        return in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tif', 'tiff'], true);
+        return in_array($ext, ['jpg', 'jpeg'], true);
     }
 
     private function resolvePreviewFilePath(array $row): ?string

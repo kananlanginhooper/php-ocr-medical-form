@@ -3,13 +3,36 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Throwable;
+use App\Services\LabelFinder;
+use App\Services\UnderlineFinder;
+use App\Services\AreaCalculator;
+use App\Services\OcrStateAccessor;
+use App\Services\HandwrittenFinder;
 
 class LastNameOcrController extends Controller
 {
+    private LabelFinder $labelFinder;
+    private UnderlineFinder $underlineFinder;
+    private AreaCalculator $areaCalculator;
+    private OcrStateAccessor $ocrStateAccessor;
+    private HandwrittenFinder $handwrittenFinder;
+
+    public function __construct(
+        LabelFinder $labelFinder,
+        UnderlineFinder $underlineFinder,
+        AreaCalculator $areaCalculator,
+        OcrStateAccessor $ocrStateAccessor,
+        HandwrittenFinder $handwrittenFinder
+    )
+    {
+        $this->labelFinder = $labelFinder;
+        $this->underlineFinder = $underlineFinder;
+        $this->areaCalculator = $areaCalculator;
+        $this->ocrStateAccessor = $ocrStateAccessor;
+        $this->handwrittenFinder = $handwrittenFinder;
+    }
     // -------------------------------------------------------------------------
     // Page / action handlers
     // -------------------------------------------------------------------------
@@ -23,18 +46,7 @@ class LastNameOcrController extends Controller
             }
 
             $selectedRecordId = (int) session('ocr_review_record_id', 0);
-            $selectedRow = $selectedRecordId > 0
-                ? $this->findPendingRowByRecordKey($selectedRecordId)
-                : DB::table('faxes_pending')->orderBy('fp_id')->first();
-
-            if ($selectedRow && empty($selectedRecordId)) {
-                $selectedRecordId = $this->resolvePendingRecordKeyFromRow($selectedRow) ?? 0;
-                if ($selectedRecordId > 0) {
-                    session(['ocr_review_record_id' => $selectedRecordId]);
-                }
-            }
-
-            $selectedData = $selectedRow ? (array) $selectedRow : [];
+            $selectedData = $this->getSelectedPendingDataFromSession();
             $selectedDocumentName = $this->resolveFileName($selectedData);
             $previewUrl = null;
             if (!empty($selectedData['fp_image_path']) && is_string($selectedData['fp_image_path'])) {
@@ -45,21 +57,22 @@ class LastNameOcrController extends Controller
 
             $sessionState = session('global_state');
             $globalRowData = is_array($sessionState) ? $sessionState : [];
+            $stateValues = $this->ocrStateAccessor->lastName($globalRowData);
 
-            $locationRaw = $this->pickValue($globalRowData, ['fp_lastname_location']) ?? '';
+            $locationRaw = (string) ($stateValues['location_raw'] ?? '');
             $location = $this->decodeLocation($locationRaw);
             $locationDecoded = json_decode((string) $locationRaw, true);
             $handwrittenLocation = is_array($locationDecoded) && isset($locationDecoded['handwritten']) && is_array($locationDecoded['handwritten'])
                 ? $locationDecoded['handwritten']
                 : [];
-            $ocrGuess = $this->pickValue($globalRowData, ['fp_lastname_ocr', 'lastname_ocr']);
-            $ocrScore = $this->pickValue($globalRowData, ['fp_lastname_ocr_score', 'fp_lastname_score', 'lastname_score']);
-            $ocrOptionsRaw = $this->pickValue($globalRowData, ['fp_lastname_ocr_options']);
+            $ocrGuess = $stateValues['ocr_guess'] ?? null;
+            $ocrScore = $stateValues['ocr_score'] ?? null;
+            $ocrOptionsRaw = $stateValues['ocr_options_raw'] ?? null;
             $ocrOptions = is_string($ocrOptionsRaw) ? json_decode($ocrOptionsRaw, true) : null;
             if (!is_array($ocrOptions)) {
                 $ocrOptions = [];
             }
-            $humanValue = $this->pickValue($globalRowData, ['fp_lastname_human', 'lastname_human']);
+            $humanValue = $stateValues['human_value'] ?? null;
 
             return view('lastname-ocr', [
                 'activeMenu' => 'lastname',
@@ -121,28 +134,18 @@ class LastNameOcrController extends Controller
     public function findLastNameLabel()
     {
         try {
-            $selectedRecordId = (int) session('ocr_review_record_id', 0);
-            if ($selectedRecordId <= 0) {
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'No document selected.',
-                ], 400);
-            }
-
-            $pendingRow = $this->findPendingRowByRecordKey($selectedRecordId);
-            $pendingData = $pendingRow ? (array) $pendingRow : [];
-            $filename = $this->resolveFileName($pendingData);
+            $pendingData = $this->getSelectedPendingDataFromSession();
             $imagePath = $this->resolveOcrImagePath($pendingData);
 
             if (!$imagePath || !file_exists($imagePath)) {
                 return response()->json([
                     'ok' => false,
-                    'message' => 'Image file not found for selected record.',
+                    'message' => 'Image file not found in session state.',
                 ], 404);
             }
 
             // Step 1: Use Tesseract to find the "Last Name:" label location
-            $labelResult = $this->findlastNameHeaderLocation($imagePath);
+            $labelResult = $this->labelFinder->findlastNameHeaderLocation($imagePath);
 
             if (!$labelResult) {
                 return response()->json([
@@ -195,85 +198,24 @@ class LastNameOcrController extends Controller
     public function findLastNameHandwritten()
     {
         try {
-            $selectedRecordId = (int) session('ocr_review_record_id', 0);
-            if ($selectedRecordId <= 0) {
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'No document selected.',
-                ], 400);
-            }
-
-            $pendingRow = $this->findPendingRowByRecordKey($selectedRecordId);
-            $pendingData = $pendingRow ? (array) $pendingRow : [];
-            if (empty($pendingData['fp_image_path'])) {
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'Selected record has no fp_image_path.',
-                ], 400);
-            }
-
+            $pendingData = $this->getSelectedPendingDataFromSession();
             $imagePath = $this->resolveOcrImagePath($pendingData);
-            if (!$imagePath || !file_exists($imagePath)) {
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'Image file not found.',
-                ], 404);
-            }
-
-            $globalState = session('global_state');
-            $locationData = is_array($globalState) && !empty($globalState['fp_lastname_location'])
-                ? json_decode($globalState['fp_lastname_location'], true)
-                : null;
-
-            if (!$locationData || !isset($locationData['label'])) {
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'Label location not found. Run Step 1 first.',
-                ], 400);
-            }
-
-            $labelResult = $locationData['label'];
-            $underlineResult = $this->detectUnderlineAfterLabel($imagePath, $labelResult);
-
-            if (!$underlineResult) {
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'Could not find underline after label.',
-                ], 400);
-            }
-
-            $currentLocationData = [];
-            if (!empty($globalState['fp_lastname_location'])) {
-                $currentLocationData = json_decode($globalState['fp_lastname_location'], true) ?? [];
-            }
-            $currentLocationData['handwritten'] = [
-                'x' => (int) $underlineResult['x'],
-                'y' => (int) $underlineResult['y'],
-                'x1' => (int) ($underlineResult['x1'] ?? $underlineResult['x']),
-                'y1' => (int) ($underlineResult['y1'] ?? $underlineResult['y']),
-                'width' => (int) (($underlineResult['x1'] ?? $underlineResult['x']) - $underlineResult['x']),
-                'height' => (int) (($underlineResult['y1'] ?? $underlineResult['y']) - $underlineResult['y']),
-                'confidence' => $underlineResult['confidence'] ?? null,
-                'source' => $underlineResult['source'] ?? 'underline-scan',
-                'underline' => $underlineResult,
-                'manual' => false,
-            ];
-
-            // update session-based state
             $state = session('global_state', []);
             if (!is_array($state)) $state = [];
-            $state = array_merge($state, [
-                'gs_current_image_path' => $pendingData['fp_image_path'] ?? null,
-                'fp_lastname_location' => json_encode($currentLocationData),
-                'updated_at' => now()->toDateTimeString(),
-            ]);
-            session(['global_state' => $state]);
+            $result = $this->handwrittenFinder->findAfterLabel(
+                $state,
+                $imagePath,
+                'fp_lastname_location',
+                $pendingData['fp_image_path'] ?? null,
+                false,
+                'Last Name OCR'
+            );
 
-            return response()->json([
-                'ok' => true,
-                'message' => 'Underline found successfully.',
-                'handwritten' => $underlineResult,
-            ]);
+            if (is_array($result['state'] ?? null)) {
+                session(['global_state' => $result['state']]);
+            }
+
+            return response()->json($result['payload'] ?? ['ok' => false, 'message' => 'Unknown error.'], (int) ($result['status'] ?? 500));
         } catch (Throwable $e) {
             \Log::warning('Error in findLastNameHandwritten: ' . $e->getMessage());
             return response()->json([
@@ -289,28 +231,12 @@ class LastNameOcrController extends Controller
     public function findLastNameArea()
     {
         try {
-            $selectedRecordId = (int) session('ocr_review_record_id', 0);
-            if ($selectedRecordId <= 0) {
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'No document selected.',
-                ], 400);
-            }
-
-            $pendingRow = $this->findPendingRowByRecordKey($selectedRecordId);
-            $pendingData = $pendingRow ? (array) $pendingRow : [];
-            if (empty($pendingData['fp_image_path'])) {
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'Selected record has no fp_image_path.',
-                ], 400);
-            }
-
+            $pendingData = $this->getSelectedPendingDataFromSession();
             $imagePath = $this->resolveOcrImagePath($pendingData);
             if (!$imagePath || !file_exists($imagePath)) {
                 return response()->json([
                     'ok' => false,
-                    'message' => 'Image file not found.',
+                    'message' => 'Image file not found in session state.',
                 ], 404);
             }
 
@@ -327,7 +253,7 @@ class LastNameOcrController extends Controller
             }
 
             $labelResult = $locationData['label'];
-            $handwrittenResult = $this->detectHandwrittenAreaAfterLabel($imagePath, $labelResult);
+            $handwrittenResult = $this->areaCalculator->detectHandwrittenAreaAfterLabel($imagePath, $labelResult);
 
             if (!$handwrittenResult) {
                 return response()->json([
@@ -336,7 +262,7 @@ class LastNameOcrController extends Controller
                 ], 400);
             }
 
-            $handBox = $this->normalizeBoxToImageBounds($imagePath, [
+            $handBox = $this->areaCalculator->normalizeBoxToImageBounds($imagePath, [
                 'x' => (int) ($handwrittenResult['x'] ?? 0),
                 'y' => (int) ($handwrittenResult['y'] ?? 0),
                 'width' => (int) ($handwrittenResult['width'] ?? 0),
@@ -408,21 +334,12 @@ class LastNameOcrController extends Controller
     public function findLastNameOptions(Request $request)
     {
         try {
-            $selectedRecordId = (int) session('ocr_review_record_id', 0);
-            if ($selectedRecordId <= 0) {
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'No document selected.',
-                ], 400);
-            }
-
-            $pendingRow = $this->findPendingRowByRecordKey($selectedRecordId);
-            $pendingData = $pendingRow ? (array) $pendingRow : [];
+            $pendingData = $this->getSelectedPendingDataFromSession();
             $imagePath = $this->resolveOcrImagePath($pendingData);
             if (!$imagePath || !file_exists($imagePath)) {
                 return response()->json([
                     'ok' => false,
-                    'message' => 'Image file not found.',
+                    'message' => 'Image file not found in session state.',
                 ], 404);
             }
 
@@ -474,7 +391,7 @@ class LastNameOcrController extends Controller
             }
             $box = $normalizedBox;
 
-            $ocrResult = $this->extractHandwritingCandidatesFromBox($imagePath, $box, 4);
+            $ocrResult = $this->areaCalculator->extractHandwritingCandidatesFromBox($imagePath, $box, 4);
             $options = is_array($ocrResult['options'] ?? null) ? $ocrResult['options'] : [];
             $commands = is_array($ocrResult['commands'] ?? null) ? $ocrResult['commands'] : [];
             if (empty($options)) {
@@ -532,8 +449,8 @@ class LastNameOcrController extends Controller
 
         // session-based state always available
 
-        $pendingRow = $this->findPendingRowByRecordKey($selectedRecordId);
-        $filename = $this->resolveFileName($pendingRow ? (array) $pendingRow : []);
+        $pendingData = $this->getSelectedPendingDataFromSession();
+        $filename = $this->resolveFileName($pendingData);
         $guess = $this->mocklastNameGuess($filename);
         $score = $this->mockOcrScore($guess, $selectedRecordId);
 
@@ -554,7 +471,7 @@ class LastNameOcrController extends Controller
         $state = session('global_state', []);
         if (!is_array($state)) $state = [];
         $state = array_merge($state, [
-            'gs_current_image_path' => ($pendingRow->fp_image_path ?? null),
+            'gs_current_image_path' => ($pendingData['fp_image_path'] ?? ($state['gs_current_image_path'] ?? null)),
             'fp_lastname_location' => $locationJson,
             'fp_lastname_ocr' => $guess,
             'fp_lastname_ocr_score' => $score,
@@ -586,13 +503,12 @@ class LastNameOcrController extends Controller
 
         // session-based state always available
 
-        $pendingRow = $this->findPendingRowByRecordKey($selectedRecordId);
-        $filename = $this->resolveFileName($pendingRow ? (array) $pendingRow : []);
+        $pendingData = $this->getSelectedPendingDataFromSession();
 
         $state = session('global_state', []);
         if (!is_array($state)) $state = [];
         $state = array_merge($state, [
-            'gs_current_image_path' => ($pendingRow->fp_image_path ?? null),
+            'gs_current_image_path' => ($pendingData['fp_image_path'] ?? ($state['gs_current_image_path'] ?? null)),
             'fp_lastname_human' => $validated['human_value'],
             'fp_lastname_confirmed' => 1,
             'updated_at' => now()->toDateTimeString(),
@@ -610,31 +526,25 @@ class LastNameOcrController extends Controller
     // Private helpers: shared with FaxController (copied)
     // -------------------------------------------------------------------------
 
-    private function findPendingRowByRecordKey(int $recordKey)
+    private function getSelectedPendingDataFromSession(): array
     {
-        if ($recordKey <= 0) {
-            return null;
+        $state = session('global_state', []);
+        if (!is_array($state)) {
+            return [];
         }
 
-        return DB::table('faxes_pending')->where('fp_id', $recordKey)->first();
-    }
-
-    private function resolvePendingRecordKeyFromRow($row): ?int
-    {
-        $data = (array) $row;
-        foreach (['id', 'fp_id'] as $key) {
-            if (!array_key_exists($key, $data) || $data[$key] === null || $data[$key] === '') {
-                continue;
-            }
-            if (is_numeric($data[$key])) {
-                $value = (int) $data[$key];
-                if ($value > 0) {
-                    return $value;
-                }
-            }
+        $data = $state;
+        $imagePath = $state['fp_image_path'] ?? $state['gs_current_image_path'] ?? $state['image_path'] ?? null;
+        if (is_string($imagePath) && trim($imagePath) !== '') {
+            $data['fp_image_path'] = $imagePath;
+        }
+        $imageName = $state['fp_image_name'] ?? $state['gs_current_image_name'] ?? null;
+        if (is_string($imageName) && trim($imageName) !== '') {
+            $data['fp_image_name'] = $imageName;
+            $data['file_name'] = $data['file_name'] ?? $imageName;
         }
 
-        return null;
+        return $data;
     }
 
     private function resolveFileName(array $row): ?string
@@ -745,6 +655,7 @@ class LastNameOcrController extends Controller
             $candidates[] = storage_path('app/public/' . $path);
             $candidates[] = public_path('storage/faxes/' . $path);
             $candidates[] = public_path('storage/' . $path);
+            $candidates[] = public_path('fax-images/' . $path);
             $candidates[] = public_path('faxes/' . $path);
             $candidates[] = public_path('uploads/' . $path);
             $candidates[] = public_path($path);
@@ -769,18 +680,7 @@ class LastNameOcrController extends Controller
         $candidate = is_string($path) && $path !== '' ? $path : $value;
         $ext = strtolower(pathinfo($candidate, PATHINFO_EXTENSION));
 
-        return in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tif', 'tiff'], true);
-    }
-
-    private function pickValue(array $row, array $candidates)
-    {
-        foreach ($candidates as $candidate) {
-            if (array_key_exists($candidate, $row) && $row[$candidate] !== null && $row[$candidate] !== '') {
-                return $row[$candidate];
-            }
-        }
-
-        return null;
+        return in_array($ext, ['jpg', 'jpeg'], true);
     }
 
     private function decodeLocation($locationRaw): array
@@ -813,29 +713,6 @@ class LastNameOcrController extends Controller
     // -------------------------------------------------------------------------
     // Private helpers: Last Name OCR specific
     // -------------------------------------------------------------------------
-
-    private function getImagePathFromFilename(?string $filename): ?string
-    {
-        try {
-            if (!is_string($filename) || trim($filename) === '') {
-                return null;
-            }
-
-            $pendingRow = DB::table('faxes_pending')
-                ->where('fp_image_name', $filename)
-                ->orWhere('file_name', $filename)
-                ->orWhere('filename', $filename)
-                ->first();
-
-            if ($pendingRow) {
-                return $this->resolveOcrImagePath((array) $pendingRow);
-            }
-
-            return null;
-        } catch (Throwable $e) {
-            return null;
-        }
-    }
 
     private function resolveOcrImagePath(array $row): ?string
     {
@@ -1336,6 +1213,8 @@ class LastNameOcrController extends Controller
         $appBase = base_path();
         $workspaceRoot = dirname($appBase);
         $scriptPathCandidates = [
+            $workspaceRoot . '/paddleOCR/PaddleOCRwithBoundingBox.py',
+            $appBase . '/paddleOCR/PaddleOCRwithBoundingBox.py',
             $appBase . '/PaddleOCRwithBoundingBox.py',
             $workspaceRoot . '/PaddleOCRwithBoundingBox.py',
         ];
@@ -1348,8 +1227,10 @@ class LastNameOcrController extends Controller
         }
 
         $pythonCandidates = [
-            $appBase . '/ocr-env/bin/python',
             $workspaceRoot . '/ocr-env/bin/python',
+            $workspaceRoot . '/paddleOCR/.venv/bin/python',
+            $workspaceRoot . '/paddleOCR/ocr-env/bin/python',
+            $appBase . '/ocr-env/bin/python',
         ];
         $pythonBin = $pythonCandidates[0];
         foreach ($pythonCandidates as $candidate) {

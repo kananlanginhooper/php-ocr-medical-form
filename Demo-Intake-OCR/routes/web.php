@@ -3,6 +3,7 @@
 use App\Http\Controllers\FaxController;
 use App\Http\Controllers\FirstNameOcrController;
 use App\Http\Controllers\LastNameOcrController;
+use App\Http\Controllers\DobOcrController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -31,6 +32,7 @@ Route::post('/lastname-ocr/area', [LastNameOcrController::class, 'findLastNameAr
 Route::post('/lastname-ocr/options', [LastNameOcrController::class, 'findLastNameOptions'])->name('lastname.options');
 Route::post('/lastname-ocr/run', [LastNameOcrController::class, 'runLastNameOcr'])->name('lastname.run');
 Route::post('/lastname-ocr/confirm', [LastNameOcrController::class, 'confirmLastNameOcr'])->name('lastname.confirm');
-Route::get('/dob-ocr', [FaxController::class, 'dobOcr'])->name('dob.index');
+Route::get('/dob-ocr', [DobOcrController::class, 'dobOcr'])->name('dob.index');
+Route::post('/dob-ocr/label', [DobOcrController::class, 'findDobLabel'])->name('dob.label');
 Route::get('/global-state', [FaxController::class, 'globalState'])->name('global.index');
 Route::post('/reset-demo', [FaxController::class, 'resetToDemo'])->name('fax.reset-demo');

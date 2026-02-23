@@ -53,6 +53,7 @@
                     class="thumb-card{{ $isSelected ? ' selected' : '' }}"
                     data-id="{{ $rowId }}"
                     data-image="{{ $row->fp_image_name ?? '' }}"
+                    data-image-path="{{ $row->fp_image_path ?? '' }}"
                     data-url="{{ route('fax.select-record', ['recordId' => $rowId]) }}"
                     onclick="selectThumb(this)"
                 >
@@ -88,6 +89,7 @@
 
     <script>
     var selectedImageName = null;
+    var selectedImagePath = null;
     var confirmUrl = '{{ route('fax.confirm-import') }}';
     var csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 
@@ -106,6 +108,7 @@
         if (label) label.textContent = '✓ Selected';
 
         selectedImageName = card.dataset.image || null;
+        selectedImagePath = card.dataset.imagePath || null;
         var btn = document.getElementById('confirm-btn');
         if (btn) {
             btn.disabled = !selectedImageName;
@@ -122,7 +125,15 @@
 
         fetch(card.dataset.url, {
             method: 'POST',
-            headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json' },
+            headers: {
+                'X-CSRF-TOKEN': csrfToken,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                image_name: card.dataset.image || null,
+                image_path: card.dataset.imagePath || null
+            })
         })
         .then(function(r) {
             if (!r.ok) throw new Error('Server error: ' + r.status);
@@ -140,6 +151,7 @@
                 label.textContent = img ? (img.alt || card.dataset.id) : card.dataset.id;
             }
             selectedImageName = null;
+            selectedImagePath = null;
             var btn = document.getElementById('confirm-btn');
             if (btn) {
                 btn.disabled = true;
@@ -159,7 +171,10 @@
         fetch(confirmUrl, {
             method: 'POST',
             headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image_name: selectedImageName }),
+            body: JSON.stringify({
+                image_name: selectedImageName,
+                image_path: selectedImagePath
+            }),
         })
         .then(function(r) {
             if (!r.ok) throw new Error('Server error: ' + r.status);
